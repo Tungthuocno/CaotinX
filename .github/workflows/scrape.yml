@@ -2,7 +2,7 @@ name: X Topic Scraper
 
 on:
   schedule:
-    - cron: '0 8,20 * * *'   # Chạy lúc 8h sáng và 8h tối (UTC) = 15h & 3h sáng VN
+    - cron: '0 2,8 * * *'   # Chạy lúc 2h sáng và 8h sáng (UTC) = 9h & 3h chiều VN
   workflow_dispatch:           # Cho phép chạy thủ công
 
 jobs:
