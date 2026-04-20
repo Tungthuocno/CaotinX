@@ -1,7 +1,6 @@
-import asyncio
 import os
 import httpx
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ── Cấu hình ──────────────────────────────────────────
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
@@ -9,72 +8,71 @@ TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 # ──────────────────────────────────────────────────────
 
-def get_reddit_posts():
-    """Lấy bài từ các subreddit AI nổi tiếng"""
-    subreddits = [
-        "artificial",
-        "MachineLearning", 
-        "ChatGPT",
-        "AIPromptProgramming",
-    ]
+def get_devto_posts():
+    """Dev.to: nền tảng blog kỹ thuật, API hoàn toàn miễn phí"""
     posts = []
+    tags = ["ai", "machinelearning", "llm", "chatgpt"]
 
-    headers = {"User-Agent": "AIDigestBot/1.0"}
-
-    for sub in subreddits:
+    for tag in tags:
         try:
-            url = f"https://www.reddit.com/r/{sub}/search.json?q=tips+OR+guide+OR+tutorial&sort=top&t=week&limit=5"
-            response = httpx.get(url, headers=headers, timeout=15, follow_redirects=True)
+            url = f"https://dev.to/api/articles?tag={tag}&top=7&per_page=5"
+            response = httpx.get(url, timeout=15)
             data = response.json()
 
-            for item in data["data"]["children"]:
-                post = item["data"]
-                # Chỉ lấy bài có nhiều upvote
-                if post["score"] >= 100:
-                    posts.append(
-                        f"[Reddit r/{sub}] {post['title']} "
-                        f"(👍 {post['score']}) - {post.get('selftext', '')[:200]}"
-                    )
-            print(f"[LOG] Reddit r/{sub}: lấy được {len(data['data']['children'])} bài")
+            for article in data:
+                posts.append(
+                    f"[Dev.to] {article['title']} "
+                    f"(❤️ {article.get('positive_reactions_count', 0)}) "
+                    f"- {article.get('description', '')[:150]}"
+                )
+            print(f"[LOG] Dev.to #{tag}: {len(data)} bài")
         except Exception as e:
-            print(f"[LOG] Lỗi Reddit r/{sub}: {e}")
+            print(f"[LOG] Lỗi Dev.to #{tag}: {e}")
 
     return posts
 
 def get_hackernews_posts():
-    """Lấy bài AI từ HackerNews"""
+    """HackerNews: cộng đồng tech lớn, API chính thức miễn phí"""
     posts = []
-    try:
-        # Tìm kiếm bài về AI trong 5 ngày gần nhất
-        since_timestamp = int((datetime.utcnow() - timedelta(days=5)).timestamp())
-        url = f"https://hn.algolia.com/api/v1/search?query=AI+tips+OR+AI+guide+OR+LLM&tags=story&numericFilters=created_at_i>{since_timestamp},points>50&hitsPerPage=10"
+    queries = ["artificial intelligence", "LLM", "ChatGPT", "AI agent"]
 
-        response = httpx.get(url, timeout=15)
-        data = response.json()
+    for query in queries:
+        try:
+            url = f"https://hn.algolia.com/api/v1/search?query={query}&tags=story&numericFilters=points>20&hitsPerPage=5"
+            response = httpx.get(url, timeout=15)
+            data = response.json()
+            hits = data.get("hits", [])
 
-        for hit in data["hits"]:
-            posts.append(
-                f"[HackerNews] {hit['title']} "
-                f"(👍 {hit.get('points', 0)}, 💬 {hit.get('num_comments', 0)} comments)"
-            )
-        print(f"[LOG] HackerNews: lấy được {len(data['hits'])} bài")
-    except Exception as e:
-        print(f"[LOG] Lỗi HackerNews: {e}")
+            for hit in hits:
+                posts.append(
+                    f"[HackerNews] {hit['title']} "
+                    f"(👍 {hit.get('points', 0)} points, "
+                    f"💬 {hit.get('num_comments', 0)} comments)"
+                )
+            print(f"[LOG] HackerNews '{query}': {len(hits)} bài")
+        except Exception as e:
+            print(f"[LOG] Lỗi HackerNews '{query}': {e}")
 
     return posts
 
 def summarize_with_gemini(posts):
-    print(f"[LOG] Gửi {len(posts)} bài lên Gemini để tóm tắt...")
-    content = "\n\n".join(posts)
+    print(f"[LOG] Gửi {len(posts)} bài lên Gemini...")
+    content = "\n\n".join(posts[:30])
 
-    prompt = f"""Dưới đây là các bài viết về AI tips, guides và xu hướng AI mới nhất từ Reddit và HackerNews trong 5-7 ngày gần nhất.
+    prompt = f"""Dưới đây là các bài viết về AI từ Dev.to và HackerNews trong tuần này.
 
-Hãy tóm tắt thành một bản tin AI hữu ích bằng tiếng Việt với cấu trúc:
-1. Các mẹo/hướng dẫn AI nổi bật nhất
-2. Công cụ hoặc kỹ thuật AI đáng chú ý
-3. Xu hướng đang được cộng đồng quan tâm
+Hãy tóm tắt thành bản tin AI hữu ích bằng tiếng Việt với cấu trúc rõ ràng:
 
-Dùng bullet points, ngôn ngữ dễ hiểu, thực tế và có thể áp dụng được.
+🔥 *Xu hướng nổi bật*
+(Những chủ đề AI được cộng đồng quan tâm nhất tuần này)
+
+💡 *Tips & Tricks thực tế*
+(Các mẹo, kỹ thuật có thể áp dụng ngay)
+
+🛠 *Công cụ & Model đáng chú ý*
+(Tool, framework, model mới được nhắc đến)
+
+Dùng bullet points, ngôn ngữ dễ hiểu, súc tích, thực tế.
 
 NỘI DUNG:
 {content}"""
@@ -109,23 +107,21 @@ def send_to_telegram(message):
             },
         )
         result = response.json()
-        print(f"[LOG] Telegram chunk {i+1}: {result.get('ok')} - {result.get('description', '')}")
+        print(f"[LOG] Telegram chunk {i+1}: ok={result.get('ok')} {result.get('description', '')}")
 
 def main():
     print("=" * 40)
     print(f"[LOG] Bắt đầu chạy lúc: {datetime.utcnow()}")
     print("=" * 40)
 
-    # Thu thập từ cả 2 nguồn
-    reddit_posts = get_reddit_posts()
+    devto_posts = get_devto_posts()
     hn_posts = get_hackernews_posts()
-    all_posts = reddit_posts + hn_posts
+    all_posts = devto_posts + hn_posts
 
-    print(f"[LOG] Tổng số bài thu thập: {len(all_posts)}")
+    print(f"[LOG] Tổng bài thu thập: {len(all_posts)}")
 
     if not all_posts:
-        print("[LOG] Không lấy được bài nào!")
-        send_to_telegram("⚠️ Không lấy được nội dung từ Reddit và HackerNews.")
+        send_to_telegram("⚠️ Không lấy được nội dung.")
         return
 
     summary = summarize_with_gemini(all_posts)
@@ -138,7 +134,7 @@ def main():
     final_message = (
         f"🤖 *AI Tips & Trends tuần này*\n"
         f"📅 Cập nhật: {today}\n"
-        f"📰 Nguồn: Reddit + HackerNews\n"
+        f"📰 Nguồn: Dev.to + HackerNews\n"
         f"{'─' * 25}\n\n"
         f"{summary}"
     )
