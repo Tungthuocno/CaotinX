@@ -2,62 +2,81 @@ import asyncio
 import os
 import httpx
 from datetime import datetime, timedelta
-from twscrape import API, gather
 
 # ── Cấu hình ──────────────────────────────────────────
-MAX_TWEETS = 20
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-X_USERNAME = os.environ["X_USERNAME"]
-X_PASSWORD = os.environ["X_PASSWORD"]
-X_EMAIL = os.environ["X_EMAIL"]
-
-# Tự động tính ngày 5 ngày trước
-since_date = (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d")
-TOPIC = f"(AI tips OR AI guide OR AI tutorial) lang:en since:{since_date} min_faves:50"
 # ──────────────────────────────────────────────────────
 
-async def get_tweets(topic, limit):
-    print(f"[LOG] Topic tìm kiếm: {topic}")
+def get_reddit_posts():
+    """Lấy bài từ các subreddit AI nổi tiếng"""
+    subreddits = [
+        "artificial",
+        "MachineLearning", 
+        "ChatGPT",
+        "AIPromptProgramming",
+    ]
+    posts = []
 
-    api = API()
+    headers = {"User-Agent": "AIDigestBot/1.0"}
 
+    for sub in subreddits:
+        try:
+            url = f"https://www.reddit.com/r/{sub}/search.json?q=tips+OR+guide+OR+tutorial&sort=top&t=week&limit=5"
+            response = httpx.get(url, headers=headers, timeout=15, follow_redirects=True)
+            data = response.json()
+
+            for item in data["data"]["children"]:
+                post = item["data"]
+                # Chỉ lấy bài có nhiều upvote
+                if post["score"] >= 100:
+                    posts.append(
+                        f"[Reddit r/{sub}] {post['title']} "
+                        f"(👍 {post['score']}) - {post.get('selftext', '')[:200]}"
+                    )
+            print(f"[LOG] Reddit r/{sub}: lấy được {len(data['data']['children'])} bài")
+        except Exception as e:
+            print(f"[LOG] Lỗi Reddit r/{sub}: {e}")
+
+    return posts
+
+def get_hackernews_posts():
+    """Lấy bài AI từ HackerNews"""
+    posts = []
     try:
-        await api.pool.add_account(X_USERNAME, X_PASSWORD, X_EMAIL, X_EMAIL)
-        print("[LOG] Đã thêm account vào pool")
+        # Tìm kiếm bài về AI trong 5 ngày gần nhất
+        since_timestamp = int((datetime.utcnow() - timedelta(days=5)).timestamp())
+        url = f"https://hn.algolia.com/api/v1/search?query=AI+tips+OR+AI+guide+OR+LLM&tags=story&numericFilters=created_at_i>{since_timestamp},points>50&hitsPerPage=10"
+
+        response = httpx.get(url, timeout=15)
+        data = response.json()
+
+        for hit in data["hits"]:
+            posts.append(
+                f"[HackerNews] {hit['title']} "
+                f"(👍 {hit.get('points', 0)}, 💬 {hit.get('num_comments', 0)} comments)"
+            )
+        print(f"[LOG] HackerNews: lấy được {len(data['hits'])} bài")
     except Exception as e:
-        print(f"[LOG] Lỗi add account: {e}")
-        return []
+        print(f"[LOG] Lỗi HackerNews: {e}")
 
-    try:
-        await api.pool.login_all()
-        print("[LOG] Login thành công")
-    except Exception as e:
-        print(f"[LOG] Lỗi login: {e}")
-        return []
+    return posts
 
-    try:
-        tweets = await gather(api.search(topic, limit=limit))
-        results = [
-            f"@{t.user.username}: {t.rawContent}"
-            for t in tweets
-            if not t.rawContent.startswith("RT ")
-        ]
-        print(f"[LOG] Tìm được {len(results)} tweet")
-        return results
-    except Exception as e:
-        print(f"[LOG] Lỗi khi tìm tweet: {e}")
-        return []
+def summarize_with_gemini(posts):
+    print(f"[LOG] Gửi {len(posts)} bài lên Gemini để tóm tắt...")
+    content = "\n\n".join(posts)
 
-def summarize_with_gemini(tweets):
-    print(f"[LOG] Gửi {len(tweets)} tweet lên Gemini...")
-    content = "\n\n".join(tweets)
-    prompt = f"""Dưới đây là các tweet về AI tips và AI guides thú vị trong 5 ngày gần nhất.
-Hãy tóm tắt những mẹo, hướng dẫn và thông tin hữu ích nhất bằng tiếng Việt.
-Trình bày rõ ràng bằng bullet points, mỗi điểm giải thích ngắn gọn nhưng đủ ý.
+    prompt = f"""Dưới đây là các bài viết về AI tips, guides và xu hướng AI mới nhất từ Reddit và HackerNews trong 5-7 ngày gần nhất.
 
-TWEETS:
+Hãy tóm tắt thành một bản tin AI hữu ích bằng tiếng Việt với cấu trúc:
+1. Các mẹo/hướng dẫn AI nổi bật nhất
+2. Công cụ hoặc kỹ thuật AI đáng chú ý
+3. Xu hướng đang được cộng đồng quan tâm
+
+Dùng bullet points, ngôn ngữ dễ hiểu, thực tế và có thể áp dụng được.
+
+NỘI DUNG:
 {content}"""
 
     try:
@@ -92,19 +111,24 @@ def send_to_telegram(message):
         result = response.json()
         print(f"[LOG] Telegram chunk {i+1}: {result.get('ok')} - {result.get('description', '')}")
 
-async def main():
+def main():
     print("=" * 40)
     print(f"[LOG] Bắt đầu chạy lúc: {datetime.utcnow()}")
     print("=" * 40)
 
-    tweets = await get_tweets(TOPIC, MAX_TWEETS)
+    # Thu thập từ cả 2 nguồn
+    reddit_posts = get_reddit_posts()
+    hn_posts = get_hackernews_posts()
+    all_posts = reddit_posts + hn_posts
 
-    if not tweets:
-        print("[LOG] Không có tweet → kiểm tra log bên trên để biết nguyên nhân")
-        send_to_telegram("⚠️ Không tìm được tweet nào. Xem log GitHub Actions để biết chi tiết.")
+    print(f"[LOG] Tổng số bài thu thập: {len(all_posts)}")
+
+    if not all_posts:
+        print("[LOG] Không lấy được bài nào!")
+        send_to_telegram("⚠️ Không lấy được nội dung từ Reddit và HackerNews.")
         return
 
-    summary = summarize_with_gemini(tweets)
+    summary = summarize_with_gemini(all_posts)
 
     if not summary:
         send_to_telegram("⚠️ Gemini không trả về kết quả.")
@@ -112,13 +136,15 @@ async def main():
 
     today = datetime.utcnow().strftime("%d/%m/%Y")
     final_message = (
-        f"🤖 *AI Tips & Guides hay nhất tuần*\n"
+        f"🤖 *AI Tips & Trends tuần này*\n"
         f"📅 Cập nhật: {today}\n"
+        f"📰 Nguồn: Reddit + HackerNews\n"
         f"{'─' * 25}\n\n"
         f"{summary}"
     )
+
     send_to_telegram(final_message)
     print("[LOG] Hoàn thành!")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
