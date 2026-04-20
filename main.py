@@ -2,36 +2,34 @@ import asyncio
 import os
 import httpx
 from twscrape import API, gather
-from twscrape.logger import set_log_level
 
-# ── Cấu hình ──────────────────────────────────────────
-TOPIC = "AI agent 2025"          # Chủ đề muốn theo dõi
-MAX_TWEETS = 20                   # Số tweet thu thập mỗi lần chạy
+TOPIC = "AI agent 2025"
+MAX_TWEETS = 20
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 X_USERNAME = os.environ["X_USERNAME"]
 X_PASSWORD = os.environ["X_PASSWORD"]
 X_EMAIL = os.environ["X_EMAIL"]
-# ──────────────────────────────────────────────────────
 
-async def get_tweets(topic: str, limit: int) -> list[str]:
+async def get_tweets(topic, limit):
     api = API()
     await api.pool.add_account(X_USERNAME, X_PASSWORD, X_EMAIL, X_EMAIL)
     await api.pool.login_all()
-
     tweets = await gather(api.search(topic, limit=limit))
-    return [
+    results = [
         f"@{t.user.username}: {t.rawContent}"
         for t in tweets
-        if not t.rawContent.startswith("RT ")  # Bỏ retweet
+        if not t.rawContent.startswith("RT ")
     ]
+    print(f"[LOG] Tìm được {len(results)} tweet cho chủ đề: {topic}")
+    return results
 
-def summarize_with_gemini(tweets: list[str], topic: str) -> str:
+def summarize_with_gemini(tweets, topic):
+    print(f"[LOG] Đang gửi {len(tweets)} tweet lên Gemini...")
     content = "\n\n".join(tweets)
     prompt = f"""Dưới đây là {len(tweets)} tweet về chủ đề "{topic}".
-Hãy tóm tắt các điểm nổi bật, xu hướng chính và thông tin đáng chú ý nhất bằng tiếng Việt.
-Trình bày rõ ràng, súc tích, dùng bullet points.
+Tóm tắt các điểm nổi bật bằng tiếng Việt, dùng bullet points, súc tích.
 
 TWEETS:
 {content}"""
@@ -41,17 +39,25 @@ TWEETS:
         json={"contents": [{"parts": [{"text": prompt}]}]},
         timeout=30,
     )
-    return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    result = response.json()
+    print(f"[LOG] Gemini status: {response.status_code}")
 
-def send_to_telegram(message: str, topic: str):
-    header = f"🔍 *Tóm tắt về: {topic}*\n{'─' * 30}\n\n"
-    full_message = header + message
-    
-    # Telegram giới hạn 4096 ký tự/tin nhắn
-    chunks = [full_message[i:i+4000] for i in range(0, len(full_message), 4000)]
-    
-    for chunk in chunks:
-        httpx.post(
+    if "candidates" not in result:
+        print(f"[LOG] Gemini lỗi: {result}")
+        return None
+
+    return result["candidates"][0]["content"]["parts"][0]["text"]
+
+def send_to_telegram(message):
+    print(f"[LOG] Đang gửi tin nhắn tới Telegram...")
+    print(f"[LOG] Chat ID: {TELEGRAM_CHAT_ID}")
+    print(f"[LOG] Độ dài tin nhắn: {len(message)} ký tự")
+
+    chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
+    print(f"[LOG] Số chunks cần gửi: {len(chunks)}")
+
+    for i, chunk in enumerate(chunks):
+        response = httpx.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             json={
                 "chat_id": TELEGRAM_CHAT_ID,
@@ -59,21 +65,33 @@ def send_to_telegram(message: str, topic: str):
                 "parse_mode": "Markdown",
             },
         )
+        result = response.json()
+        print(f"[LOG] Chunk {i+1} - Status: {response.status_code}")
+        print(f"[LOG] Chunk {i+1} - Response: {result}")
 
 async def main():
-    print(f"Đang thu thập tweet về: {TOPIC}")
+    print("=" * 40)
+    print(f"[LOG] Bắt đầu chạy - Chủ đề: {TOPIC}")
+    print("=" * 40)
+
     tweets = await get_tweets(TOPIC, MAX_TWEETS)
-    
+
     if not tweets:
-        print("Không tìm thấy tweet nào.")
+        print("[LOG] Không tìm được tweet nào → Dừng lại")
+        # Gửi thông báo test thẳng vào Telegram để kiểm tra kết nối
+        send_to_telegram("⚠️ Test kết nối Telegram: Không tìm được tweet nào!")
         return
-    
-    print(f"Thu thập được {len(tweets)} tweet. Đang tóm tắt...")
+
     summary = summarize_with_gemini(tweets, TOPIC)
-    
-    print("Gửi vào Telegram...")
-    send_to_telegram(summary, TOPIC)
-    print("Hoàn thành!")
+
+    if not summary:
+        print("[LOG] Gemini không trả về kết quả → Dừng lại")
+        send_to_telegram("⚠️ Test kết nối Telegram: Gemini lỗi!")
+        return
+
+    final_message = f"🔍 *Tóm tắt về: {TOPIC}*\n{'─' * 25}\n\n{summary}"
+    send_to_telegram(final_message)
+    print("[LOG] Hoàn thành!")
 
 if __name__ == "__main__":
     asyncio.run(main())
