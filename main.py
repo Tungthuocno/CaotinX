@@ -5,20 +5,17 @@ from datetime import datetime
 # ── Cấu hình ──────────────────────────────────────────
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+GROK_API_KEY = os.environ["GROK_API_KEY"]
 # ──────────────────────────────────────────────────────
 
 def get_devto_posts():
-    """Dev.to: nền tảng blog kỹ thuật, API hoàn toàn miễn phí"""
     posts = []
     tags = ["ai", "machinelearning", "llm", "chatgpt"]
-
     for tag in tags:
         try:
             url = f"https://dev.to/api/articles?tag={tag}&top=7&per_page=5"
             response = httpx.get(url, timeout=15)
             data = response.json()
-
             for article in data:
                 posts.append(
                     f"[Dev.to] {article['title']} "
@@ -28,48 +25,42 @@ def get_devto_posts():
             print(f"[LOG] Dev.to #{tag}: {len(data)} bài")
         except Exception as e:
             print(f"[LOG] Lỗi Dev.to #{tag}: {e}")
-
     return posts
 
 def get_hackernews_posts():
-    """HackerNews: cộng đồng tech lớn, API chính thức miễn phí"""
     posts = []
     queries = ["artificial intelligence", "LLM", "ChatGPT", "AI agent"]
-
     for query in queries:
         try:
             url = f"https://hn.algolia.com/api/v1/search?query={query}&tags=story&numericFilters=points>20&hitsPerPage=5"
             response = httpx.get(url, timeout=15)
             data = response.json()
             hits = data.get("hits", [])
-
             for hit in hits:
                 posts.append(
                     f"[HackerNews] {hit['title']} "
-                    f"(👍 {hit.get('points', 0)} points, "
-                    f"💬 {hit.get('num_comments', 0)} comments)"
+                    f"(👍 {hit.get('points', 0)} points)"
                 )
             print(f"[LOG] HackerNews '{query}': {len(hits)} bài")
         except Exception as e:
             print(f"[LOG] Lỗi HackerNews '{query}': {e}")
-
     return posts
 
-def summarize_with_gemini(posts):
-    print(f"[LOG] Gửi {len(posts)} bài lên Gemini...")
+def summarize_with_grok(posts):
+    print(f"[LOG] Gửi {len(posts)} bài lên Grok...")
     content = "\n\n".join(posts[:30])
 
     prompt = f"""Dưới đây là các bài viết về AI từ Dev.to và HackerNews trong tuần này.
 
-Hãy tóm tắt thành bản tin AI hữu ích bằng tiếng Việt với cấu trúc rõ ràng:
+Hãy tóm tắt thành bản tin AI hữu ích bằng tiếng Việt với cấu trúc:
 
-🔥 *Xu hướng nổi bật*
+🔥 Xu hướng nổi bật
 (Những chủ đề AI được cộng đồng quan tâm nhất tuần này)
 
-💡 *Tips & Tricks thực tế*
+💡 Tips và Tricks thực tế
 (Các mẹo, kỹ thuật có thể áp dụng ngay)
 
-🛠 *Công cụ & Model đáng chú ý*
+🛠 Công cụ và Model đáng chú ý
 (Tool, framework, model mới được nhắc đến)
 
 Dùng bullet points, ngôn ngữ dễ hiểu, súc tích, thực tế.
@@ -79,20 +70,28 @@ NỘI DUNG:
 
     try:
         response = httpx.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY}",
-            json={"contents": [{"parts": [{"text": prompt}]}]},
+            "https://api.x.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "grok-3-mini",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 1500,
+            },
             timeout=30,
         )
         result = response.json()
-        print(f"[LOG] Gemini status: {response.status_code}")
+        print(f"[LOG] Grok status: {response.status_code}")
 
-        if "candidates" not in result:
-            print(f"[LOG] Gemini lỗi: {result}")
+        if "choices" not in result:
+            print(f"[LOG] Grok lỗi: {result}")
             return None
 
-        return result["candidates"][0]["content"]["parts"][0]["text"]
+        return result["choices"][0]["message"]["content"]
     except Exception as e:
-        print(f"[LOG] Lỗi Gemini: {e}")
+        print(f"[LOG] Lỗi Grok: {e}")
         return None
 
 def send_to_telegram(message):
@@ -124,10 +123,10 @@ def main():
         send_to_telegram("⚠️ Không lấy được nội dung.")
         return
 
-    summary = summarize_with_gemini(all_posts)
+    summary = summarize_with_grok(all_posts)
 
     if not summary:
-        send_to_telegram("⚠️ Gemini không trả về kết quả.")
+        send_to_telegram("⚠️ Grok không trả về kết quả.")
         return
 
     today = datetime.utcnow().strftime("%d/%m/%Y")
