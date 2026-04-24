@@ -79,7 +79,7 @@ NỘI DUNG:
 
     try:
         response = httpx.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={AIzaSyA-aZGI-U9XgGeN9EIpEH7aH8zMytC9ZgI}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY}",
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=30,
         )
